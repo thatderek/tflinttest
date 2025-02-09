@@ -1,0 +1,329 @@
+name: TFLint
+
+on:
+  workflow_call:
+    inputs:
+      tflint_version:
+        description: 'Version of TFLint to use'
+        required: false
+        type: string
+        default: 'LATEST'
+      config_file:
+        description: 'Path to .tflint.hcl config file'
+        required: false
+        type: string
+        default: ''
+      working_directory:
+        description: 'Directory to run TFLint in'
+        required: false
+        type: string
+        default: '.'
+      fail_on_warnings:
+        description: 'Whether to fail the check on warnings'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+
+  fmt:
+    name: Check Terraform Formatting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            ${{ inputs.working_directory }}/**/*.tf
+
+      - name: Check formatting
+        if: steps.changed-files.outputs.any_changed == 'true'
+        id: fmt
+        run: |
+          EXIT_CODE=0
+          FMT_OUTPUT=""
+          
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            echo "Checking formatting of $file..."
+            if ! output=$(terraform fmt -check -diff "$file" 2>&1); then
+              EXIT_CODE=1
+              FMT_OUTPUT="$FMT_OUTPUT\n\n### $file\n\`\`\`diff\n$output\n\`\`\`"
+            fi
+          done
+          
+          echo "fmt_output<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$FMT_OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+      - name: Post Formatting Results
+        if: steps.fmt.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = `### Terraform Format Check Failed 🎨
+
+            The following files need to be formatted with \`terraform fmt\`:
+            
+            ${process.env.FMT_OUTPUT}
+            
+            Please run \`terraform fmt\` on these files and commit the changes.`;
+            
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              body: report,
+              event: 'COMMENT'
+            });
+            
+            core.setFailed('Terraform formatting check failed');
+  tflint:
+    name: Run TFLint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ inputs.tflint_version }}
+
+      - name: Cache TFLint plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ runner.os }}-${{ inputs.tflint_version }}
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            ${{ inputs.working_directory }}/**/*.tf
+
+      - name: Setup default config
+        id: setup-config
+        run: |
+          if [ -z "${{ inputs.config_file }}" ] || [ ! -f "${{ inputs.config_file }}" ]; then
+            echo "Using default TFLint configuration"
+            cat > .tflint.hcl << 'EOL'
+plugin "terraform" {}
+
+rule "terraform_comment_syntax" {
+  enabled  = true
+  severity = "notice"
+}
+rule "terraform_deprecated_index" {
+  enabled  = true
+  severity = "warning"
+}
+rule "terraform_deprecated_interpolation" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_deprecated_lookup" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_documented_outputs" {
+  enabled  = true
+  severity = "info"
+}
+rule "terraform_documented_variables" {
+  enabled  = true
+  severity = "info"
+}
+rule "terraform_empty_list_equality" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_map_duplicate_keys" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_module_pinned_source" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_module_version" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_naming_convention" {
+  enabled  = true
+  severity = "warning"
+}
+rule "terraform_required_providers" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_required_version" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_standard_module_structure" {
+  enabled  = false
+}
+rule "terraform_typed_variables" {
+  enabled  = true
+  severity = "warning"
+}
+rule "terraform_unused_declarations" {
+  enabled  = true
+  severity = "error"
+}
+rule "terraform_unused_required_providers" {
+  enabled  = true
+  severity = "info"
+}
+rule "terraform_workspace_remote" {
+  enabled  = true
+  severity = "error"
+}
+EOL
+            echo "config_path=.tflint.hcl" >> $GITHUB_OUTPUT
+          else
+            echo "Using provided config file: ${{ inputs.config_file }}"
+            echo "config_path=${{ inputs.config_file }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Initialize TFLint
+        working-directory: ${{ inputs.working_directory }}
+        run: tflint --init --config ${{ steps.setup-config.outputs.config_path }}
+        
+      - name: Run TFLint on changed files
+        if: steps.changed-files.outputs.any_changed == 'true'
+        id: tflint
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          VIOLATIONS=""
+          EXIT_CODE=0
+          
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            echo "Linting $file..."
+            
+            # Run TFLint and capture output
+            if ! OUTPUT=$(tflint --config ${{ steps.setup-config.outputs.config_path }} --format json "$file" 2>&1); then
+              echo "Error running TFLint on $file: $OUTPUT"
+              EXIT_CODE=1
+              continue
+            fi
+            
+            # Validate JSON output
+            if ! echo "$OUTPUT" | jq empty 2>/dev/null; then
+              echo "Invalid JSON output from TFLint for $file"
+              EXIT_CODE=1
+              continue
+            fi
+            
+            # Append violations if any found
+            if [ ! -z "$OUTPUT" ] && [ "$OUTPUT" != "[]" ]; then
+              if [ ! -z "$VIOLATIONS" ]; then
+                VIOLATIONS="$VIOLATIONS,"
+              fi
+              VIOLATIONS="$VIOLATIONS$OUTPUT"
+            fi
+          done
+          
+          # Save violations to a file
+          echo "[$VIOLATIONS]" > tflint-output.json
+          
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+      - name: Post TFLint Results
+        if: always() && steps.changed-files.outputs.any_changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            try {
+              const outputPath = path.join('${{ inputs.working_directory }}', 'tflint-output.json');
+              const tflintOutput = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+              
+              if (tflintOutput.length === 0) {
+                console.log('No linting issues found');
+                return;
+              }
+              
+              // Format the violations into a markdown report
+              let report = '### TFLint Results\n\n';
+              const violations = tflintOutput.flat();
+              
+              // Group violations by severity
+              const severityOrder = ['error', 'warning', 'notice'];
+              const violationsBySeverity = {};
+              
+              violations.forEach(v => {
+                if (!violationsBySeverity[v.rule.severity]) {
+                  violationsBySeverity[v.rule.severity] = [];
+                }
+                violationsBySeverity[v.rule.severity].push(v);
+              });
+              
+              // Count totals
+              const totals = {
+                error: violationsBySeverity.error?.length || 0,
+                warning: violationsBySeverity.warning?.length || 0,
+                notice: violationsBySeverity.notice?.length || 0
+              };
+              
+              report += `Found ${violations.length} issue(s):\n`;
+              report += `- 🚨 ${totals.error} error(s)\n`;
+              report += `- ⚠️ ${totals.warning} warning(s)\n`;
+              report += `- 🤔 ${totals.notice} notice(s)\n\n`;
+              
+              // Format violations by severity
+              severityOrder.forEach(severity => {
+                if (violationsBySeverity[severity]?.length > 0) {
+                  report += `#### ${severity.toUpperCase()}\n\n`;
+                  
+                  violationsBySeverity[severity].forEach(v => {
+                    const icon = severity === 'error' ? '🚨' : severity === 'warning' ? '⚠️' : '🤔';
+                    report += `${icon} **${v.range.filename}:${v.range.start.line}**\n`;
+                    report += `\`${v.rule.name}\`: ${v.message}\n\n`;
+                  });
+                }
+              });
+              
+              // Post the report as a PR review
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                body: report,
+                event: 'COMMENT'
+              });
+              
+              // Determine if we should fail the check
+              const shouldFail = totals.error > 0 || 
+                               (${{ inputs.fail_on_warnings }} && totals.warning > 0);
+              
+              if (shouldFail) {
+                core.setFailed(`Found ${totals.error} error(s) and ${totals.warning} warning(s)`);
+              }
+            } catch (error) {
+              core.setFailed(`Error processing TFLint results: ${error.message}`);
+            }
