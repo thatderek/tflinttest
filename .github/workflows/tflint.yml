@@ -29,7 +29,6 @@ permissions:
   contents: read
 
 jobs:
-
   fmt:
     name: Check Terraform Formatting
     runs-on: ubuntu-latest
@@ -94,6 +93,7 @@ jobs:
             });
             
             core.setFailed('Terraform formatting check failed');
+
   tflint:
     name: Run TFLint
     runs-on: ubuntu-latest
@@ -212,7 +212,7 @@ EOL
         working-directory: ${{ inputs.working_directory }}
         run: tflint --init --config ${{ steps.setup-config.outputs.config_path }}
         
-      - name: Run TFLint on changed files
+      - name: Run TFLint on changed directories
         if: steps.changed-files.outputs.any_changed == 'true'
         id: tflint
         working-directory: ${{ inputs.working_directory }}
@@ -220,19 +220,33 @@ EOL
           VIOLATIONS=""
           EXIT_CODE=0
           
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
-            echo "Linting $file..."
+          # Get unique directories of changed files
+          CHANGED_DIRS=$(
+            for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+              dirname "$file"
+            done | sort -u
+          )
+          
+          for dir in $CHANGED_DIRS; do
+            echo "Linting directory: $dir"
             
-            # Run TFLint and capture output
-            if ! OUTPUT=$(tflint --config ${{ steps.setup-config.outputs.config_path }} --format json "$file" 2>&1); then
-              echo "Error running TFLint on $file: $OUTPUT"
+            # Run TFLint on the directory
+            if ! OUTPUT=$(
+              cd "$dir" && \
+              tflint \
+                --config ${{ steps.setup-config.outputs.config_path }} \
+                --format json \
+                . \
+              2>&1
+            ); then
+              echo "Error running TFLint in directory $dir: $OUTPUT"
               EXIT_CODE=1
               continue
             fi
             
             # Validate JSON output
             if ! echo "$OUTPUT" | jq empty 2>/dev/null; then
-              echo "Invalid JSON output from TFLint for $file"
+              echo "Invalid JSON output from TFLint for directory $dir"
               EXIT_CODE=1
               continue
             fi
