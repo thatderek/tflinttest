@@ -1,0 +1,11 @@
+name: TF Lint caller name
+on:
+  pull_request:
+    branch: main
+
+jobs:
+  basic:
+    uses: thatderek/tflinttest/.github/workflows/tflint.yml@main
+    permissions:
+      pull-requests: write
+      contents: read
