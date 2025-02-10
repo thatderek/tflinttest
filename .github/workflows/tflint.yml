@@ -7,7 +7,7 @@ on:
         description: 'Version of TFLint to use'
         required: false
         type: string
-        default: 'LATEST'
+        default: 'latest'
       config_file:
         description: 'Path to .tflint.hcl config file'
         required: false
@@ -62,10 +62,11 @@ jobs:
             echo "Checking formatting of $file..."
             if ! output=$(terraform fmt -check -diff "$file" 2>&1); then
               EXIT_CODE=1
-              FMT_OUTPUT="$FMT_OUTPUT\n\n### $file\n\`\`\`diff\n$output\n\`\`\`"
+              FMT_OUTPUT="$FMT_OUTPUT\\n\\n### $file\\n\`\`\`diff\n$output\\n\`\`\`"
             fi
           done
           
+          FMT_OUTPUT=$(echo $FMT_OUTPUT | sed -e 's/```/\\`\\`\\`/g')
           echo "fmt_output<<EOF" >> $GITHUB_OUTPUT
           echo -e "$FMT_OUTPUT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -79,8 +80,8 @@ jobs:
             const report = `### Terraform Format Check Failed 🎨
 
             The following files need to be formatted with \`terraform fmt\`:
-            
-            ${process.env.FMT_OUTPUT}
+           
+            ${{steps.fmt.outputs.FMT_OUTPUT}}
             
             Please run \`terraform fmt\` on these files and commit the changes.`;
             
@@ -128,80 +129,82 @@ jobs:
           if [ -z "${{ inputs.config_file }}" ] || [ ! -f "${{ inputs.config_file }}" ]; then
             echo "Using default TFLint configuration"
             cat > .tflint.hcl << 'EOL'
-plugin "terraform" {}
+          plugin "terraform" {
+            enabled = true
+          }
 
-rule "terraform_comment_syntax" {
-  enabled  = true
-  severity = "notice"
-}
-rule "terraform_deprecated_index" {
-  enabled  = true
-  severity = "warning"
-}
-rule "terraform_deprecated_interpolation" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_deprecated_lookup" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_documented_outputs" {
-  enabled  = true
-  severity = "info"
-}
-rule "terraform_documented_variables" {
-  enabled  = true
-  severity = "info"
-}
-rule "terraform_empty_list_equality" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_map_duplicate_keys" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_module_pinned_source" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_module_version" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_naming_convention" {
-  enabled  = true
-  severity = "warning"
-}
-rule "terraform_required_providers" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_required_version" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_standard_module_structure" {
-  enabled  = false
-}
-rule "terraform_typed_variables" {
-  enabled  = true
-  severity = "warning"
-}
-rule "terraform_unused_declarations" {
-  enabled  = true
-  severity = "error"
-}
-rule "terraform_unused_required_providers" {
-  enabled  = true
-  severity = "info"
-}
-rule "terraform_workspace_remote" {
-  enabled  = true
-  severity = "error"
-}
-EOL
+          rule "terraform_comment_syntax" {
+            enabled  = true
+            severity = "notice"
+          }
+          rule "terraform_deprecated_index" {
+            enabled  = true
+            severity = "warning"
+          }
+          rule "terraform_deprecated_interpolation" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_deprecated_lookup" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_documented_outputs" {
+            enabled  = true
+            severity = "info"
+          }
+          rule "terraform_documented_variables" {
+            enabled  = true
+            severity = "info"
+          }
+          rule "terraform_empty_list_equality" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_map_duplicate_keys" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_module_pinned_source" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_module_version" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_naming_convention" {
+            enabled  = true
+            severity = "warning"
+          }
+          rule "terraform_required_providers" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_required_version" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_standard_module_structure" {
+            enabled  = false
+          }
+          rule "terraform_typed_variables" {
+            enabled  = true
+            severity = "warning"
+          }
+          rule "terraform_unused_declarations" {
+            enabled  = true
+            severity = "error"
+          }
+          rule "terraform_unused_required_providers" {
+            enabled  = true
+            severity = "info"
+          }
+          rule "terraform_workspace_remote" {
+            enabled  = true
+            severity = "error"
+          }
+          EOL
             echo "config_path=.tflint.hcl" >> $GITHUB_OUTPUT
           else
             echo "Using provided config file: ${{ inputs.config_file }}"
