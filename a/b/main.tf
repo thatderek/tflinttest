@@ -6,5 +6,5 @@ provider "aws" {
 }
 
 variable "SUP_22" {
-  default = "lol2"
+  default = "lol"
 }
